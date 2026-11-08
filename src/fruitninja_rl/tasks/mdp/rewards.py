@@ -44,7 +44,7 @@ def slice_object_reward(
   fruit_name: str,
   asset_cfg: SceneEntityCfg,
   epsilon: float = slicing.HIT_RADIUS,
-  min_rel_speed: float = slicing.MIN_BLADE_SPEED,
+  min_blade_speed: float = slicing.MIN_BLADE_SPEED,
   min_alignment: float = 0.7, # alignment along the blade axes
   blade_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> torch.Tensor:
@@ -52,9 +52,8 @@ def slice_object_reward(
 
   The cut geometry comes from ``slicing.check_slice`` (the same test used by
   the ``fruit_sliced`` termination). The start of the step is reconstructed
-  from the current positions and velocities (p_prev = p - v * step_dt), and
-  the check runs in the fruit's frame so its speed is the EE-fruit relative
-  speed. Three criteria are scored:
+  from the current positions and velocities (p_prev = p - v * step_dt).
+  Three criteria are scored:
 
   * Alignment: cosine between the blade axis (``blade_axis`` in the EE site
     frame, rotated to world) and the unit vector from the EE to the fruit
@@ -63,12 +62,12 @@ def slice_object_reward(
   * Interception: the closest EE-to-fruit-center distance d over the step
     must be within ``epsilon``. Shaped as exp(-max(d - epsilon, 0)^2 /
     miss_std^2) so near-misses still get signal.
-  * Relative speed: |v_ee - v_fruit| / min_rel_speed, clipped to [0, 1], so
-    slow touches are not rewarded as cuts.
+  * Blade speed: |v_ee| / min_blade_speed, clipped to [0, 1], so slow touches
+    (or fruit falling onto a stationary blade) are not rewarded as cuts.
 
   Returns ``dense + bonus`` in [0, 2]: ``dense`` is the product of the three
   soft terms; ``bonus`` is 1.0 when ``check_slice`` reports a cut (d <=
-  epsilon and relative speed >= min_rel_speed) and alignment >=
+  epsilon and blade speed >= min_blade_speed) and alignment >=
   ``min_alignment``.
   """
   robot: Entity = env.scene[asset_cfg.name]
@@ -92,27 +91,24 @@ def slice_object_reward(
   cos_align = torch.where(dist <= epsilon, torch.ones_like(cos_align), cos_align)
   align = cos_align.clamp(0.0, 1.0)
 
-  # Cut check over the step, in the fruit's frame (fruit fixed at the origin)
-  # so the reported speed is the EE-fruit relative speed.
-  ee_rel = ee_pos - fruit_pos
-  ee_rel_prev = ee_rel - (ee_vel - fruit_vel) * env.step_dt
-  origin = torch.zeros_like(ee_rel)
-  cut, miss_dist, rel_speed = slicing.check_slice(
-    ee_rel_prev,
-    ee_rel,
-    origin,
-    origin,
+  # Cut check over the step, in the world frame (same as the termination),
+  # so the speed criterion is on the blade alone.
+  cut, miss_dist, blade_speed = slicing.check_slice(
+    ee_pos - ee_vel * env.step_dt,
+    ee_pos,
+    fruit_pos - fruit_vel * env.step_dt,
+    fruit_pos,
     dt=env.step_dt,
     hit_radius=epsilon,
-    min_blade_speed=min_rel_speed,
+    min_blade_speed=min_blade_speed,
   )
 
   # Interception: how close the EE came to the fruit center during the step.
   miss_excess = (miss_dist - epsilon).clamp_min(0.0)
   intercept = torch.exp(-miss_excess.square() / miss_std**2)
 
-  # Relative speed must be high enough for a cut rather than a touch.
-  speed = (rel_speed / min_rel_speed).clamp(0.0, 1.0)
+  # The blade must be moving fast enough for a cut rather than a touch.
+  speed = (blade_speed / min_blade_speed).clamp(0.0, 1.0)
 
   dense = align * intercept * speed
   success = cut & (cos_align >= min_alignment)
