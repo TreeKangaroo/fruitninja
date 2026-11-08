@@ -143,6 +143,11 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
       weight=1.0,
       params={"std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()},
     ),
+    "slice_object_reward": RewardTermCfg(
+      func=mdp.slice_object_reward,
+      weight=1.0,
+      params={"miss_std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()}
+    ),
     # Motion-quality regularizers.
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
     "joint_pos_limits": RewardTermCfg(
