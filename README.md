@@ -16,7 +16,8 @@ uv sync    # creates .venv with mjlab, torch, mujoco-warp, ...
 src/
   fruitninja_common/            # shared by RL and trajopt
     assets/iiwa14/              # unmodified MuJoCo Menagerie kuka_iiwa_14
-    robot.py                    # iiwa EntityCfg: actuators, limits, EE site, ready pose
+    robot.py                    # iiwa EntityCfg: actuators, limits, ready pose
+    blade.py                    # toy blade rigidly mounted on the flange
     fruit.py                    # fruit sphere + FruitDropRange (where fruit spawns)
     slicing.py                  # THE cut condition (numpy or torch)
   fruitninja_rl/
@@ -39,12 +40,14 @@ The task is found by mjlab through the `mjlab.tasks` entry point in
 - **Episode:** one fruit. It is dropped from rest at a random point in
   `FruitDropRange` (x 0.45–0.7 m, y ±0.3 m, z 1.4–1.7 m) and falls straight
   down. The episode ends when the fruit is sliced or drops below 0.15 m (about 0.5 s).
-- **Action (6D):** end-effector pose delta → damped least-squares (DLS) IK →
+- **Robot:** iiwa 14 with a rigid toy blade on the flange (see below). It starts
+  in a "ready" pose with the blade level across the drop zone, edge up.
+- **Action (6D):** blade-center pose delta → damped least-squares (DLS) IK →
   joint position targets (mjlab `DifferentialIKAction`), at 50 Hz.
 - **Observation (privileged):** joint pos/vel, EE pos/quat/vel, fruit position
   relative to the EE, fruit velocity, last action.
 - **Cut condition** (`fruitninja_common/slicing.py`): within one control step,
-  the blade point passes within `HIT_RADIUS` (= fruit radius) of the fruit
+  the blade *center* passes within `HIT_RADIUS` (= fruit radius) of the fruit
   center while moving at ≥ `MIN_BLADE_SPEED` (0.5 m/s). The check uses closest
   approach over the step, so fast pass-throughs between steps are not missed. The fruit
   does not collide with the robot.
@@ -72,11 +75,21 @@ uv run python -m fruitninja_rl.scripts.play --viewer viser \
 tensorboard --logdir logs/rsl_rl   # or set logger="wandb" in rl_cfg.py
 ```
 
-## Adding the blade
+## The blade
 
-1. Attach the blade geometry to `link7` (edit `assets/iiwa14/iiwa14.xml`, or
-   attach a separate MJCF in `robot.get_iiwa_spec`).
-2. Move `EE_SITE_POS` in `robot.py` to the blade's cutting point. Everything
-   (IK target, observations, cut condition) reads that one site.
-3. If cut direction matters, extend `slicing.check_slice` (e.g. require the
-   blade's velocity to be roughly along the blade plane).
+`fruitninja_common/blade.py` adds a rigid (jointless) body `blade` to `link7`:
+a 6 cm cylindrical hilt, then a 40 × 5 × 0.5 cm box along the flange axis
+(0.4 kg in total). It collides with the floor and the arm but not with the
+fruit. A red, visual-only strip marks the cutting edge, which is the long side
+at +x in the blade frame. Everything is in `mjData`:
+
+| what | name | read with |
+|---|---|---|
+| blade frame | body `blade` | `data.xpos`, `data.xmat` / entity `body_*` |
+| blade center (= IK/obs end effector) | site `blade_center` | `data.site_xpos` |
+| cutting edge endpoints | sites `blade_edge_base`, `blade_edge_tip` | `data.site_xpos` |
+
+Names and dimensions are constants in `blade.py`. In mjlab the names are
+prefixed with the entity name (e.g. `robot/blade_edge_tip`). If you change the
+blade or the ready pose, recompute `LINK_INERTIA` in `robot.py` (it sets the
+PD gains).

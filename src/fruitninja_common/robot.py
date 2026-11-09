@@ -2,7 +2,7 @@
 
 Shared by RL and trajectory optimization. The MJCF in ``assets/iiwa14`` is the
 unmodified MuJoCo Menagerie model; everything task-specific (actuators, the
-end-effector site, initial pose) is added here in code so the XML stays easy
+blade, initial pose) is added here in code so the XML stays easy
 to diff against upstream.
 """
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 import mujoco
 
+from fruitninja_common import blade
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 
@@ -53,15 +54,16 @@ ARMATURE: dict[str, float] = {
   "joint6": 0.05,
   "joint7": 0.05,
 }
-# Link-side inertia each joint sees at READY_JOINT_POS [kg m^2]: the diagonal
-# of the joint-space mass matrix without armature.
+# Link-side inertia each joint sees at READY_JOINT_POS, blade included
+# [kg m^2]: the diagonal of the joint-space mass matrix without armature.
+# Recompute if the blade or the ready pose changes.
 LINK_INERTIA: dict[str, float] = {
-  "joint1": 1.375,
-  "joint2": 3.083,
-  "joint3": 0.878,
-  "joint4": 0.862,
-  "joint5": 0.014,
-  "joint6": 0.018,
+  "joint1": 3.715,
+  "joint2": 4.124,
+  "joint3": 0.573,
+  "joint4": 0.860,
+  "joint5": 0.074,
+  "joint6": 0.069,
   "joint7": 0.001,
 }
 NATURAL_FREQ = 2.0 * math.pi * 10.0  # [rad/s] 10 Hz position bandwidth
@@ -79,29 +81,33 @@ DAMPING: dict[str, float] = {
   n: 2.0 * DAMPING_RATIO * _effective_inertia(n) * NATURAL_FREQ for n in JOINT_NAMES
 }
 
-# The point on the robot that does the "slicing". For now this is the center of
-# the flange (Menagerie's ``attachment_site``). When the blade is added, move
-# this to the blade (e.g. its midpoint) -- every consumer reads this name.
-EE_SITE_NAME = "ee_site"
-EE_SITE_BODY = "link7"
-EE_SITE_POS = (0.0, 0.0, 0.045)
+# The blade (see blade.py) is mounted rigidly on the flange: link7's
+# ``attachment_site`` position, axes aligned with link7.
+FLANGE_BODY = "link7"
+FLANGE_POS = (0.0, 0.0, 0.045)
 
-# "Ready" pose: flange at ~(0.59, 0, 0.71) m pointing forward, i.e. in the middle
-# of the fruit drop zone. (Menagerie's own "home" keyframe puts the flange at
-# ~0.29 m height, which is too low to intercept falling fruit early.)
+# The "end effector" used for IK control and observations: the blade center.
+# Every consumer (action, observations, rewards, cut check) reads this name.
+EE_SITE_NAME = blade.BLADE_CENTER_SITE
+
+# "Ready" pose: the blade lies level across the middle of the fruit drop zone,
+# edge pointing straight up: blade center at ~(0.55, 0, 0.70) m, cutting edge
+# spanning y = -0.2..0.2 m at z ~0.725 m. The arm reaches in from the -y side.
+# Found by IK; joint6 is at ~80% of its range, which is unavoidable for a
+# level blade with this mount.
 READY_JOINT_POS: dict[str, float] = {
-  "joint1": 0.0,
-  "joint2": 0.2,
-  "joint3": 0.0,
-  "joint4": -1.6,
-  "joint5": 0.0,
-  "joint6": -0.5,
-  "joint7": 0.0,
+  "joint1": -0.944,
+  "joint2": 1.348,
+  "joint3": -0.853,
+  "joint4": 0.814,
+  "joint5": -0.257,
+  "joint6": -1.707,
+  "joint7": -0.897,
 }
 
 
 def get_iiwa_spec() -> mujoco.MjSpec:
-  """Load the Menagerie iiwa and adapt it for mjlab."""
+  """Load the Menagerie iiwa, adapt it for mjlab, and mount the blade."""
   spec = mujoco.MjSpec.from_file(str(IIWA_XML))
 
   # mjlab creates actuators from EntityArticulationInfoCfg, and its own
@@ -117,9 +123,7 @@ def get_iiwa_spec() -> mujoco.MjSpec:
   for light in list(spec.lights):
     spec.delete(light)
 
-  spec.body(EE_SITE_BODY).add_site(
-    name=EE_SITE_NAME, pos=EE_SITE_POS, size=(0.01, 0, 0), rgba=(0, 1, 0, 1)
-  )
+  blade.attach_blade(spec.body(FLANGE_BODY), pos=FLANGE_POS)
   return spec
 
 
