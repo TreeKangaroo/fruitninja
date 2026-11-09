@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "KUKA iiwa fruit slicing: RL vs. trajectory optimization"
 requires-python = ">=3.12"
 dependencies = [
+    "casadi>=3.8.2",
     "mjlab==1.6.0",
 ]
 
