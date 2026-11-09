@@ -18,6 +18,7 @@ __all__ = [
   "termination_term",
   "ee_fruit_proximity",
   "slice_object_reward",
+  "staged_slice_reward",
   "joint_vel_limits",
 ]
 
@@ -113,6 +114,45 @@ def slice_object_reward(
   dense = align * intercept * speed
   success = cut & (cos_align >= min_alignment)
   return dense + success.float()
+
+
+def staged_slice_reward(
+  env: ManagerBasedRlEnv,
+  reaching_std: float,
+  miss_std: float,
+  fruit_name: str,
+  asset_cfg: SceneEntityCfg,
+  epsilon: float = slicing.HIT_RADIUS,
+  min_blade_speed: float = slicing.MIN_BLADE_SPEED,
+  min_alignment: float = 0.7,
+  blade_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
+) -> torch.Tensor:
+  """Staged reward: reach the fruit, then slice it.
+
+  Returns ``reaching * (1 + slicing)``:
+
+  * ``reaching`` = ``ee_fruit_proximity`` with ``reaching_std``, in [0, 1].
+    Gives the approach signal far from the fruit.
+  * ``slicing`` = ``slice_object_reward``, in [0, 2]. Only pays when the
+    blade is aligned, intercepting, and fast, plus 1 on an actual cut.
+
+  The result is in [0, 3]. Getting close without cutting earns at most 1 per
+  step, while a real slice earns up to 3, so the policy cannot do as well by
+  just hovering next to the fruit. Multiplying by ``reaching`` also keeps the
+  slicing term from paying out far from the fruit.
+  """
+  reaching = ee_fruit_proximity(env, reaching_std, fruit_name, asset_cfg)
+  slicing_term = slice_object_reward(
+    env,
+    miss_std,
+    fruit_name,
+    asset_cfg,
+    epsilon=epsilon,
+    min_blade_speed=min_blade_speed,
+    min_alignment=min_alignment,
+    blade_axis=blade_axis,
+  )
+  return reaching * (1.0 + slicing_term)
 
 
 

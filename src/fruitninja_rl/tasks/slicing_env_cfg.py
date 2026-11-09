@@ -137,16 +137,29 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     "slice": RewardTermCfg(
       func=mdp.termination_term, weight=500.0, params={"term_name": "fruit_sliced"}
     ),
-    # Dense shaping to get learning started. Set weight to 0 for sparse-only.
+    # Dense shaping: reach the fruit, then slice it (reaching * (1 + slicing)).
+    # Set weight to 0 for sparse-only.
+    "staged_slice_reward": RewardTermCfg(
+      func=mdp.staged_slice_reward,
+      weight=1.0,
+      params={
+        "reaching_std": 0.3,
+        "miss_std": 0.3,
+        "fruit_name": FRUIT,
+        "asset_cfg": _ee(),
+      },
+    ),
+    # The two parts of staged_slice_reward on their own. Off by default (they
+    # are already inside it); give one a weight to try it separately.
     "ee_fruit_proximity": RewardTermCfg(
       func=mdp.ee_fruit_proximity,
-      weight=1.0,
+      weight=0.0,
       params={"std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()},
     ),
     "slice_object_reward": RewardTermCfg(
       func=mdp.slice_object_reward,
-      weight=1.0,
-      params={"miss_std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()}
+      weight=0.0,
+      params={"miss_std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()},
     ),
     # Motion-quality regularizers.
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
