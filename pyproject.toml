@@ -5,6 +5,7 @@ description = "KUKA iiwa fruit slicing: RL vs. trajectory optimization"
 requires-python = ">=3.12"
 dependencies = [
     "mjlab==1.6.0",
+    "wandb<0.29",
 ]
 
 # mjlab discovers task packages through this entry-point group and imports them,

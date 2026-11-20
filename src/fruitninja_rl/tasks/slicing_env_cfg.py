@@ -175,10 +175,12 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     ),
   }
 
-  # Logged once per episode under Metrics/ (Metrics/slice_success = success rate).
+  # Logged once per episode under Episode_Metrics/ (slice_success = success rate).
   metrics = {
     "slice_success": MetricsTermCfg(func=mdp.slice_success, reduce="max"),
     "neg_closest_approach": MetricsTermCfg(func=mdp.closest_approach, reduce="max"),
+    "peak_blade_speed": MetricsTermCfg(func=mdp.blade_speed, reduce="max"),
+    "neg_min_fruit_height": MetricsTermCfg(func=mdp.fruit_height, reduce="max"),
   }
 
   return ManagerBasedRlEnvCfg(
@@ -189,12 +191,17 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     rewards=rewards,
     terminations=terminations,
     metrics=metrics,
+    # Track the robot, not a fixed world point: env 0 sits at a grid offset that
+    # is far from the world origin when num_envs is large, so a WORLD camera
+    # films an empty floor in training videos.
     viewer=ViewerConfig(
-      origin_type=ViewerConfig.OriginType.WORLD,
-      lookat=(0.5, 0.0, 0.7),
-      distance=3.0,
+      origin_type=ViewerConfig.OriginType.ASSET_ROOT,
+      entity_name="robot",
+      distance=4.0,
       elevation=-15.0,
       azimuth=135.0,
+      width=640,
+      height=480,
     ),
     sim=SimulationCfg(
       nconmax=50,
