@@ -5,6 +5,7 @@ frame (the robot sits at the origin of each env, unrotated).
 """
 
 from dataclasses import dataclass
+from functools import partial
 
 import mujoco
 
@@ -12,6 +13,27 @@ from mjlab.entity import EntityCfg
 
 FRUIT_RADIUS = 0.04  # [m] roughly an apple
 FRUIT_MASS = 0.15  # [kg]
+
+FRUIT_COLOR = (0.9, 0.2, 0.1, 1.0)  # whole fruit
+SLICED_COLOR = (0.2, 0.85, 0.2, 1.0)  # after the blade has cut it
+
+# RL: a pool of reusable fruit bodies. A fruit lives ~0.6 s (fall from ~1.5 m)
+# and the pool size is the cap on fruit in the air at once: a spawn is skipped
+# while every slot is busy.
+NUM_FRUIT_SLOTS = 4
+# Gap between consecutive drops, uniform. Mean 0.375 s with a ~0.6 s fall is
+# about 1.6 fruit in the air on average, and 3-4 in bursts. Shorten it for a
+# harder game (e.g. --env.events.spawn-fruit.interval-range-s 0.1 0.4).
+SPAWN_INTERVAL_S = (0.15, 0.6)  # [s]
+
+
+def fruit_name(slot: int) -> str:
+  return f"fruit_{slot}"
+
+
+def sliced_fruit_name(slot: int) -> str:
+  """The green twin of ``fruit_name(slot)``: it takes over when the fruit is cut."""
+  return f"sliced_fruit_{slot}"
 
 
 @dataclass(frozen=True)
@@ -34,7 +56,7 @@ class FruitDropRange:
 def get_fruit_spec(
   radius: float = FRUIT_RADIUS,
   mass: float = FRUIT_MASS,
-  rgba: tuple[float, float, float, float] = (0.9, 0.2, 0.1, 1.0),
+  rgba: tuple[float, float, float, float] = FRUIT_COLOR,
 ) -> mujoco.MjSpec:
   spec = mujoco.MjSpec()
   body = spec.worldbody.add_body(name="fruit")
@@ -54,7 +76,7 @@ def get_fruit_spec(
   return spec
 
 
-def get_fruit_cfg() -> EntityCfg:
-  # The initial position is irrelevant: a reset event drops the fruit at a
-  # random point of FruitDropRange at the start of every episode.
-  return EntityCfg(spec_fn=get_fruit_spec)
+def get_fruit_cfg(rgba: tuple[float, float, float, float] = FRUIT_COLOR) -> EntityCfg:
+  # The initial position is irrelevant: the fruit pool (tasks/mdp/fruit_pool.py)
+  # places each fruit at a random point of FruitDropRange when it spawns.
+  return EntityCfg(spec_fn=partial(get_fruit_spec, rgba=rgba))

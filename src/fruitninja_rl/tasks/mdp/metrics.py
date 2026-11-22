@@ -1,4 +1,8 @@
-"""Per-episode metrics, logged under ``Metrics/`` during training."""
+"""Per-episode metrics, logged under ``Episode_Metrics/`` during training.
+
+Counters come from the fruit pool, which is wiped on reset, so each value is
+for the episode that just ended.
+"""
 
 from __future__ import annotations
 
@@ -6,32 +10,47 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from .fruit_pool import get_fruit_pool
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
-__all__ = ["slice_success", "closest_approach", "blade_speed", "fruit_height"]
+__all__ = [
+  "fruits_spawned",
+  "fruits_sliced",
+  "fruits_missed",
+  "slice_rate",
+  "blade_speed",
+  "fruits_in_air",
+]
 
 
-def slice_success(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """1.0 if the fruit was sliced this step. Use with reduce="max" -> success rate."""
-  return env.termination_manager.get_term("fruit_sliced").float()
+def fruits_spawned(env: ManagerBasedRlEnv) -> torch.Tensor:
+  return get_fruit_pool(env, update=True).spawned_count.float()
 
 
-def closest_approach(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """Negative blade-to-fruit distance this step. Use with reduce="max" to log
-  minus the episode's closest approach (there is no "min" reduction)."""
-  term = env.termination_manager.get_term_cfg("fruit_sliced").func
-  return -term.closest_distance
+def fruits_sliced(env: ManagerBasedRlEnv) -> torch.Tensor:
+  return get_fruit_pool(env, update=True).sliced_count.float()
+
+
+def fruits_missed(env: ManagerBasedRlEnv) -> torch.Tensor:
+  return get_fruit_pool(env, update=True).missed_count.float()
+
+
+def slice_rate(env: ManagerBasedRlEnv) -> torch.Tensor:
+  """Sliced / (sliced + missed): the share of finished fruit that were cut.
+  Fruit still in the air at the end of the episode are not counted."""
+  pool = get_fruit_pool(env, update=True)
+  done = (pool.sliced_count + pool.missed_count).clamp_min(1)
+  return pool.sliced_count / done
 
 
 def blade_speed(env: ManagerBasedRlEnv) -> torch.Tensor:
   """Blade speed [m/s] over the last step. With reduce="max": the episode's peak
   (compare with MIN_BLADE_SPEED to see whether the policy swings fast enough)."""
-  term = env.termination_manager.get_term_cfg("fruit_sliced").func
-  return term.blade_speed
+  return get_fruit_pool(env, update=True).blade_speed
 
 
-def fruit_height(env: ManagerBasedRlEnv) -> torch.Tensor:
-  """Negative fruit height [m] at the end of the step. With reduce="max": minus
-  the episode's lowest fruit height, i.e. how far the fruit fell before the episode ended."""
-  return -env.scene["fruit"].data.root_link_pos_w[:, 2]
+def fruits_in_air(env: ManagerBasedRlEnv) -> torch.Tensor:
+  """Fruit currently in the air. With reduce="max": the episode's peak."""
+  return get_fruit_pool(env, update=True).active.sum(1).float()

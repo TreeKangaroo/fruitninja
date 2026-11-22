@@ -43,7 +43,7 @@ def make_slicing_ppo_cfg() -> RslRlOnPolicyRunnerCfg:
     logger="wandb",
     wandb_project="fruitninja",
     wandb_tags=("iiwa", "slice"),
-    # One rollout (24 steps = 0.48 s) is roughly one fruit drop.
+    # A rollout (24 steps = 0.48 s) is a small slice of the 10 s episode.
     num_steps_per_env=24,
     max_iterations=2_000,
     save_interval=100,
