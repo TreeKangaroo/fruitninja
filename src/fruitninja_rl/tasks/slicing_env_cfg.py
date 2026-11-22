@@ -2,7 +2,8 @@
 
 One episode = ``EPISODE_LENGTH_S`` seconds of a fruit stream. Fruit are dropped
 one after another (random gap, ``SPAWN_INTERVAL_S``) from random points above
-the robot and fall straight down. The episode only ends on timeout; the robot
+the robot, each on a randomly chosen trajectory (``TRAJECTORIES`` in fruit.py:
+straight down, or drifting in x). The episode only ends on timeout; the robot
 should slice as many fruit as it can. Sliced fruit turn green and keep falling;
 every fruit disappears when it reaches the floor (see ``mdp/fruit_pool.py``).
 
@@ -18,7 +19,7 @@ from fruitninja_common.fruit import (
   NUM_FRUIT_SLOTS,
   SLICED_COLOR,
   SPAWN_INTERVAL_S,
-  FruitDropRange,
+  TRAJECTORIES,
   fruit_name,
   get_fruit_cfg,
   sliced_fruit_name,
@@ -50,7 +51,6 @@ def _ee() -> SceneEntityCfg:
 
 
 def make_slicing_env_cfg(
-  drop: FruitDropRange = FruitDropRange(),
   spawn_interval_s: tuple[float, float] = SPAWN_INTERVAL_S,
   multi_fruit: bool = True,
 ) -> ManagerBasedRlEnvCfg:
@@ -130,7 +130,7 @@ def make_slicing_env_cfg(
       params={
         "fruit_names": FRUIT_NAMES,
         "sliced_fruit_names": SLICED_FRUIT_NAMES,
-        "drop": drop,
+        "trajectories": dict(TRAJECTORIES),
         "asset_cfg": _ee(),
       },
     ),

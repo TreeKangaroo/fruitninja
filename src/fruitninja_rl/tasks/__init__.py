@@ -12,7 +12,10 @@ from .slicing_env_cfg import make_slicing_env_cfg
 MULTI_FRUIT_TASK = "Fruitninja-Slice-Iiwa"
 SINGLE_FRUIT_TASK = "Fruitninja-Slice-Iiwa-Single"
 
-# Same observation/action spaces, so checkpoints transfer between the two.
+# Both tasks mix every trajectory in fruit.TRAJECTORIES and have the same
+# observation/action spaces, so checkpoints transfer between the two. They do not
+# transfer from straight-drop-only training: that observation normalizer has zero
+# variance for the fruit's vx, so train afresh.
 for task_id, multi in ((MULTI_FRUIT_TASK, True), (SINGLE_FRUIT_TASK, False)):
   register_mjlab_task(
     task_id=task_id,

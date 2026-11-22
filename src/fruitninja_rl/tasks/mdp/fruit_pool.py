@@ -44,11 +44,18 @@ class FruitPool:
     p = cfg.params
     self.names: tuple[str, ...] = tuple(p["fruit_names"])  # red bodies
     self.sliced_names: tuple[str, ...] = tuple(p["sliced_fruit_names"])  # green twins
-    self.drop: FruitDropRange = p["drop"]
+    trajectories: list[FruitDropRange] = list(p["trajectories"].values())
     self.ee_cfg = p["asset_cfg"]
     self.hit_radius: float = p.get("hit_radius", slicing.HIT_RADIUS)
     self.min_blade_speed: float = p.get("min_blade_speed", slicing.MIN_BLADE_SPEED)
     n, k, dev = env.num_envs, len(self.names), env.device
+    # One row per trajectory type: (types, 6, 2) for x, y, z, vx, vy, vz by lo, hi.
+    self.drop_bounds = torch.tensor(
+      [[t.x, t.y, t.z, t.vx, t.vy, t.vz] for t in trajectories], device=dev
+    )
+    self.drop_weights = torch.tensor(
+      [t.weight for t in trajectories], dtype=torch.float, device=dev
+    )
 
     # Per-fruit state, (envs, slots).
     self.active = torch.zeros(n, k, dtype=torch.bool, device=dev)  # in the air
@@ -106,6 +113,7 @@ class FruitPool:
 
   def spawn(self, env: ManagerBasedRlEnv, env_ids: torch.Tensor) -> None:
     """Drop one new fruit in each of ``env_ids``, using each env's first free slot.
+    Each fruit draws its own trajectory type, then a start state from that range.
 
     Envs with every slot busy (already ``len(names)`` fruit in the air) skip
     this spawn, which caps the number of simultaneous fruit.
@@ -119,16 +127,14 @@ class FruitPool:
       return
     slot = free.to(torch.int8).argmax(1)  # first free slot
 
-    def uniform(lo_hi: tuple[float, float]) -> torch.Tensor:
-      return torch.empty(n, device=env.device).uniform_(*lo_hi)
-
-    d = self.drop
-    pos = torch.stack([uniform(d.x), uniform(d.y), uniform(d.z)], 1)
-    pos = pos + env.scene.env_origins[env_ids]
+    kind = torch.multinomial(self.drop_weights, n, replacement=True)
+    lo, hi = self.drop_bounds[kind].unbind(-1)  # (n, 6) each
+    start = lo + (hi - lo) * torch.rand_like(lo)
+    pos = start[:, :3] + env.scene.env_origins[env_ids]
     state = torch.zeros(n, 13, device=env.device)
     state[:, 0:3] = pos
     state[:, 3] = 1.0  # identity quaternion (w, x, y, z)
-    state[:, 7:10] = torch.stack([uniform(d.vx), uniform(d.vy), uniform(d.vz)], 1)
+    state[:, 7:10] = start[:, 3:]
 
     for k, name in enumerate(self.names):
       sel = (slot == k).nonzero().squeeze(-1)

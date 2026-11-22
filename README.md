@@ -18,7 +18,7 @@ src/
     assets/iiwa14/              # unmodified MuJoCo Menagerie kuka_iiwa_14
     robot.py                    # iiwa EntityCfg: actuators, limits, ready pose
     blade.py                    # toy blade rigidly mounted on the flange
-    fruit.py                    # fruit sphere + FruitDropRange (where fruit spawns)
+    fruit.py                    # fruit sphere + TRAJECTORIES (where/how fruit spawn)
     slicing.py                  # THE cut condition (numpy or torch)
   fruitninja_rl/
     tasks/
@@ -48,10 +48,20 @@ describes multi.
   drops at reset and each next one follows after a random 0.15–0.6 s gap
   (`SPAWN_INTERVAL_S` in `fruit.py`), about 27 per episode, with up to
   `NUM_FRUIT_SLOTS` = 4 in the air at once (a spawn is skipped while all 4
-  slots are busy). Each drops from rest
-  at a random point in `FruitDropRange` (x 0.45–0.7 m, y ±0.3 m, z 1.4–1.7 m)
-  and falls straight down (~0.55 s). Slicing does **not** end the episode; only
-  the clock does.
+  slots are busy). Each takes ~0.55 s to fall. Slicing does **not** end the
+  episode; only the clock does.
+- **Trajectories** (both variants): each fruit independently picks an entry of
+  `TRAJECTORIES` in `fruit.py`, in proportion to its `weight` (equal by default):
+
+  | name | release x [m] | vx [m/s] |
+  |---|---|---|
+  | `straight` | 0.45–0.70 | 0 |
+  | `xvel` | 0.79–0.885 | -0.75 to -0.50 |
+
+  Both release at y ±0.3 m, z 1.4–1.7 m and cross blade height (z = 0.70 m)
+  within x = 0.45–0.70 m. To add a trajectory, add an entry to the dict. To
+  change the mix for a training run:
+  `--env.events.fruit-pool.params.trajectories.xvel.weight 2`.
 - **Fruit lifecycle** (`tasks/mdp/fruit_pool.py`): red while whole, green once
   sliced (it keeps falling), and it disappears when it reaches the floor. Each
   env has `NUM_FRUIT_SLOTS` reusable slots, and each slot has a red and a green

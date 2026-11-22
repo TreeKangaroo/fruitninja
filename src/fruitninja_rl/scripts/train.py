@@ -7,6 +7,8 @@
 Common options:
   --fruit-mode multi|single        10 s fruit stream (default) or one fruit per episode
   --env.scene.num-envs 4096        parallel envs (use thousands on a GPU)
+  --env.events.fruit-pool.params.trajectories.xvel.weight 2
+                                   throw xvel twice as often as straight (0 = never)
   --agent.max-iterations 2000
   --agent.run-name my_experiment
   --gpu-ids None                   train on CPU (slow; for debugging only)

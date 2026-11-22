@@ -42,7 +42,10 @@ class FruitDropRange:
 
   The default is the proposal's base case: the fruit starts at rest and
   falls straight down, through the robot's reachable workspace. For 3D
-  throws, widen the velocity ranges.
+  throws, widen the velocity ranges and add the result to ``TRAJECTORIES``.
+
+  ``weight`` is how often this range is picked, relative to the others in
+  ``TRAJECTORIES`` (0 = never).
   """
 
   x: tuple[float, float] = (0.45, 0.70)  # [m]
@@ -51,6 +54,24 @@ class FruitDropRange:
   vx: tuple[float, float] = (0.0, 0.0)  # [m/s]
   vy: tuple[float, float] = (0.0, 0.0)  # [m/s]
   vz: tuple[float, float] = (0.0, 0.0)  # [m/s]
+  weight: float = 1.0
+
+
+# The "xvel" trajectory: the same drop, plus a constant velocity along x towards
+# the robot. Release height, y and fall time are those of FruitDropRange(), so
+# only the shape of the path changes. The release x is moved out to compensate
+# for the drift: every fruit crosses blade height (z = 0.70 m, 0.38-0.45 s after
+# release) at x = 0.45-0.70 m, as in the straight drop. If you change vx, set
+# x = (0.45 - vx_min * 0.452, 0.70 - vx_max * 0.378) to stay in that band
+# (for vx <= 0).
+X_VELOCITY_DROP = FruitDropRange(x=(0.79, 0.885), vx=(-0.75, -0.50))
+# (0.79, 0.885)
+# What the robot trains on: every fruit independently picks one of these when it
+# spawns, so a single episode (and the air at one moment) mixes them.
+TRAJECTORIES: dict[str, FruitDropRange] = {
+  "straight": FruitDropRange(),
+  "xvel": X_VELOCITY_DROP,
+}
 
 
 def get_fruit_spec(
@@ -78,5 +99,5 @@ def get_fruit_spec(
 
 def get_fruit_cfg(rgba: tuple[float, float, float, float] = FRUIT_COLOR) -> EntityCfg:
   # The initial position is irrelevant: the fruit pool (tasks/mdp/fruit_pool.py)
-  # places each fruit at a random point of FruitDropRange when it spawns.
+  # places each fruit according to one of TRAJECTORIES when it spawns.
   return EntityCfg(spec_fn=partial(get_fruit_spec, rgba=rgba))
