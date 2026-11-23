@@ -10,12 +10,15 @@ from fruitninja_common import slicing
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.utils.lab_api.math import quat_apply
 
+from .fruit_pool import get_fruit_pool
+
 if TYPE_CHECKING:
   from mjlab.entity import Entity
   from mjlab.envs import ManagerBasedRlEnv
 
 __all__ = [
-  "termination_term",
+  "slices_this_step",
+  "fruits_missed_this_step",
   "ee_fruit_proximity",
   "slice_object_reward",
   "staged_slice_reward",
@@ -23,37 +26,44 @@ __all__ = [
 ]
 
 
-def termination_term(env: ManagerBasedRlEnv, term_name: str) -> torch.Tensor:
-  """1.0 on the step where the given termination term fired (e.g. a slice)."""
-  return env.termination_manager.get_term(term_name).float()
+def slices_this_step(env: ManagerBasedRlEnv) -> torch.Tensor:
+  """Number of fruit sliced this step (usually 0 or 1)."""
+  return get_fruit_pool(env, update=True).new_slices
 
 
-def ee_fruit_proximity(
-  env: ManagerBasedRlEnv, std: float, fruit_name: str, asset_cfg: SceneEntityCfg
+def fruits_missed_this_step(env: ManagerBasedRlEnv) -> torch.Tensor:
+  """Number of unsliced fruit that reached the floor this step."""
+  return get_fruit_pool(env, update=True).new_misses
+
+
+# Dense shaping. Several fruit are in the air at once, so each term is computed
+# for every fruit (envs, slots) and the best one counts (max over fruit). That
+# way the policy is free to chase whichever fruit it can actually reach instead
+# of being tied to e.g. the lowest one. Fruit already sliced earn nothing.
+
+
+def _reaching(
+  env: ManagerBasedRlEnv, std: float, asset_cfg: SceneEntityCfg
 ) -> torch.Tensor:
-  """Dense shaping: exp(-d^2 / std^2), d = end-effector-to-fruit distance."""
+  """(envs, slots): exp(-d^2 / std^2), d = EE-to-fruit distance; 0 for non-targets."""
+  pool = get_fruit_pool(env, update=True)
   robot: Entity = env.scene[asset_cfg.name]
-  fruit: Entity = env.scene[fruit_name]
   ee_pos = robot.data.site_pos_w[:, asset_cfg.site_ids].squeeze(1)
-  dist_sq = (fruit.data.root_link_pos_w - ee_pos).square().sum(-1)
-  return torch.exp(-dist_sq / std**2)
+  dist_sq = (pool.shaping_pos - ee_pos[:, None]).square().sum(-1)
+  return torch.exp(-dist_sq / std**2) * pool.shaping_mask
 
 
-def slice_object_reward(
+def _slicing(
   env: ManagerBasedRlEnv,
   miss_std: float,
-  fruit_name: str,
   asset_cfg: SceneEntityCfg,
-  epsilon: float = slicing.HIT_RADIUS,
-  min_blade_speed: float = slicing.MIN_BLADE_SPEED,
-  min_alignment: float = 0.7, # alignment along the blade axes
-  blade_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
+  epsilon: float,
+  min_blade_speed: float,
+  min_alignment: float,
+  blade_axis: tuple[float, float, float],
 ) -> torch.Tensor:
-  """Shaped reward for slicing through the spherical fruit during this step.
+  """(envs, slots): the slice-shaping score of each fruit, in [0, 2]; 0 for non-targets.
 
-  The cut geometry comes from ``slicing.check_slice`` (the same test used by
-  the ``fruit_sliced`` termination). The start of the step is reconstructed
-  from the current positions and velocities (p_prev = p - v * step_dt).
   Three criteria are scored:
 
   * Alignment: cosine between the blade axis (``blade_axis`` in the EE site
@@ -66,18 +76,19 @@ def slice_object_reward(
   * Blade speed: |v_ee| / min_blade_speed, clipped to [0, 1], so slow touches
     (or fruit falling onto a stationary blade) are not rewarded as cuts.
 
-  Returns ``dense + bonus`` in [0, 2]: ``dense`` is the product of the three
-  soft terms; ``bonus`` is 1.0 when ``check_slice`` reports a cut (d <=
-  epsilon and blade speed >= min_blade_speed) and alignment >=
-  ``min_alignment``.
+  Returns ``dense + bonus``: ``dense`` is the product of the three soft terms;
+  ``bonus`` is 1.0 when ``slicing.check_slice`` reports a cut (d <= epsilon and
+  blade speed >= min_blade_speed) and alignment >= ``min_alignment``. The start
+  of the step is reconstructed from the current positions and velocities
+  (p_prev = p - v * step_dt).
   """
+  pool = get_fruit_pool(env, update=True)
   robot: Entity = env.scene[asset_cfg.name]
-  fruit: Entity = env.scene[fruit_name]
-  ee_pos = robot.data.site_pos_w[:, asset_cfg.site_ids].squeeze(1)
-  ee_quat = robot.data.site_quat_w[:, asset_cfg.site_ids].squeeze(1)
-  ee_vel = robot.data.site_lin_vel_w[:, asset_cfg.site_ids].squeeze(1)
-  fruit_pos = fruit.data.root_link_pos_w
-  fruit_vel = fruit.data.root_link_lin_vel_w
+  ee_pos = robot.data.site_pos_w[:, asset_cfg.site_ids].squeeze(1)[:, None]  # (B,1,3)
+  ee_quat = robot.data.site_quat_w[:, asset_cfg.site_ids].squeeze(1)[:, None]
+  ee_vel = robot.data.site_lin_vel_w[:, asset_cfg.site_ids].squeeze(1)[:, None]
+  fruit_pos = pool.shaping_pos  # (B,K,3)
+  fruit_vel = pool.shaping_vel
 
   rel_pos = fruit_pos - ee_pos  # EE -> fruit center
   dist = rel_pos.norm(dim=-1)
@@ -87,13 +98,13 @@ def slice_object_reward(
   # in slicing.check_slice)
   axis = torch.tensor(blade_axis, dtype=ee_quat.dtype, device=env.device)
   axis = axis / axis.norm()
-  blade_dir = quat_apply(ee_quat, axis.expand_as(rel_pos))
+  blade_dir = quat_apply(ee_quat.expand(-1, rel_pos.shape[1], -1), axis.expand_as(rel_pos))
   cos_align = (blade_dir * rel_pos).sum(-1) / dist.clamp_min(1e-6)
   cos_align = torch.where(dist <= epsilon, torch.ones_like(cos_align), cos_align)
   align = cos_align.clamp(0.0, 1.0)
 
-  # Cut check over the step, in the world frame (same as the termination),
-  # so the speed criterion is on the blade alone.
+  # Cut check over the step, in the world frame (same as the fruit pool), so
+  # the speed criterion is on the blade alone.
   cut, miss_dist, blade_speed = slicing.check_slice(
     ee_pos - ee_vel * env.step_dt,
     ee_pos,
@@ -113,48 +124,62 @@ def slice_object_reward(
 
   dense = align * intercept * speed
   success = cut & (cos_align >= min_alignment)
-  return dense + success.float()
+  return (dense + success.float()) * pool.shaping_mask
+
+
+def ee_fruit_proximity(
+  env: ManagerBasedRlEnv, std: float, asset_cfg: SceneEntityCfg
+) -> torch.Tensor:
+  """Dense shaping: exp(-d^2 / std^2) for the closest-to-the-blade unsliced fruit."""
+  return _reaching(env, std, asset_cfg).max(dim=1).values
+
+
+def slice_object_reward(
+  env: ManagerBasedRlEnv,
+  miss_std: float,
+  asset_cfg: SceneEntityCfg,
+  epsilon: float = slicing.HIT_RADIUS,
+  min_blade_speed: float = slicing.MIN_BLADE_SPEED,
+  min_alignment: float = 0.7,  # alignment along the blade axes
+  blade_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
+) -> torch.Tensor:
+  """Shaped reward for slicing through a fruit during this step: the best
+  fruit's score from ``_slicing`` (alignment x interception x speed, plus 1 on a cut)."""
+  return _slicing(
+    env, miss_std, asset_cfg, epsilon, min_blade_speed, min_alignment, blade_axis
+  ).max(dim=1).values
 
 
 def staged_slice_reward(
   env: ManagerBasedRlEnv,
   reaching_std: float,
   miss_std: float,
-  fruit_name: str,
   asset_cfg: SceneEntityCfg,
   epsilon: float = slicing.HIT_RADIUS,
   min_blade_speed: float = slicing.MIN_BLADE_SPEED,
   min_alignment: float = 0.7,
   blade_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> torch.Tensor:
-  """Staged reward: reach the fruit, then slice it.
+  """Staged reward per fruit: reach it, then slice it. Best fruit counts.
 
-  Returns ``reaching * (1 + slicing)``:
+  For each unsliced fruit in the air, ``reaching * (1 + slicing)``:
 
-  * ``reaching`` = ``ee_fruit_proximity`` with ``reaching_std``, in [0, 1].
-    Gives the approach signal far from the fruit.
-  * ``slicing`` = ``slice_object_reward``, in [0, 2]. Only pays when the
-    blade is aligned, intercepting, and fast, plus 1 on an actual cut.
+  * ``reaching`` = ``exp(-d^2 / reaching_std^2)``, in [0, 1]. Gives the
+    approach signal far from the fruit.
+  * ``slicing`` in [0, 2]: only pays when the blade is aligned, intercepting,
+    and fast, plus 1 on an actual cut.
 
-  The result is in [0, 3]. Getting close without cutting earns at most 1 per
-  step, while a real slice earns up to 3, so the policy cannot do as well by
-  just hovering next to the fruit. Multiplying by ``reaching`` also keeps the
-  slicing term from paying out far from the fruit.
+  Per fruit the result is in [0, 3]; the reward is the max over fruit. Getting
+  close without cutting earns at most 1 per step, while a real slice earns up
+  to 3, so the policy cannot do as well by just hovering next to a fruit.
+  Multiplying by ``reaching`` also keeps the slicing term from paying out far
+  from the fruit.
   """
-  reaching = ee_fruit_proximity(env, reaching_std, fruit_name, asset_cfg)
-  slicing_term = slice_object_reward(
-    env,
-    miss_std,
-    fruit_name,
-    asset_cfg,
-    epsilon=epsilon,
-    min_blade_speed=min_blade_speed,
-    min_alignment=min_alignment,
-    blade_axis=blade_axis,
+  reaching = _reaching(env, reaching_std, asset_cfg)
+  slicing_term = _slicing(
+    env, miss_std, asset_cfg, epsilon, min_blade_speed, min_alignment, blade_axis
   )
-  return reaching * (1.0 + slicing_term)
-
-
+  return (reaching * (1.0 + slicing_term)).max(dim=1).values
 
 
 def joint_vel_limits(

@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "casadi>=3.8.2",
     "mjlab==1.6.0",
+    "wandb<0.29",
 ]
 
 # mjlab discovers task packages through this entry-point group and imports them,

@@ -7,6 +7,7 @@ everything.
 
 from mjlab.envs.mdp import *  # noqa: F403
 
+from .fruit_pool import *  # noqa: F403
 from .metrics import *  # noqa: F403
 from .observations import *  # noqa: F403
 from .rewards import *  # noqa: F403

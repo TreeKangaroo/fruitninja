@@ -37,28 +37,50 @@ The task is found by mjlab through the `mjlab.tasks` entry point in
 
 ## The RL task
 
-- **Episode:** one fruit. It is dropped from rest at a random point in
-  `FruitDropRange` (x 0.45–0.7 m, y ±0.3 m, z 1.4–1.7 m) and falls straight
-  down. The episode ends when the fruit is sliced or drops below 0.15 m (about 0.5 s).
+Two variants share observation/action spaces (checkpoints transfer between
+them). Pick one with `--fruit-mode multi|single` on `train`/`play` (default
+`multi`), or by task id: `Fruitninja-Slice-Iiwa` (multi) and
+`Fruitninja-Slice-Iiwa-Single`. **Single:** one fruit per episode, which ends as
+soon as the fruit is sliced or lands (2 s cap). The rest of this section
+describes multi.
+
+- **Episode:** a 10 s stream of fruit (500 steps at 50 Hz). The first fruit
+  drops at reset and each next one follows after a random 0.15–0.6 s gap
+  (`SPAWN_INTERVAL_S` in `fruit.py`), about 27 per episode, with up to
+  `NUM_FRUIT_SLOTS` = 4 in the air at once (a spawn is skipped while all 4
+  slots are busy). Each drops from rest
+  at a random point in `FruitDropRange` (x 0.45–0.7 m, y ±0.3 m, z 1.4–1.7 m)
+  and falls straight down (~0.55 s). Slicing does **not** end the episode; only
+  the clock does.
+- **Fruit lifecycle** (`tasks/mdp/fruit_pool.py`): red while whole, green once
+  sliced (it keeps falling), and it disappears when it reaches the floor. Each
+  env has `NUM_FRUIT_SLOTS` reusable slots, and each slot has a red and a green
+  body; cutting a fruit hands its state to the green one. The viewers need no
+  special support.
 - **Robot:** iiwa 14 with a rigid toy blade on the flange (see below). It starts
   in a "ready" pose with the blade level across the drop zone, edge up.
 - **Action (6D):** blade-center pose delta → damped least-squares (DLS) IK →
   joint position targets (mjlab `DifferentialIKAction`), at 50 Hz.
-- **Observation (privileged):** joint pos/vel, EE pos/quat/vel, fruit position
-  relative to the EE, fruit velocity, last action.
+- **Observation (privileged):** joint pos/vel, EE pos/quat/vel, every
+  unsliced fruit in the air, lowest first (position relative to the EE,
+  velocity, valid flag; zeros for empty slots), last action.
 - **Cut condition** (`fruitninja_common/slicing.py`): within one control step,
   the blade *center* passes within `HIT_RADIUS` (= fruit radius) of the fruit
   center while moving at ≥ `MIN_BLADE_SPEED` (0.5 m/s). The check uses closest
   approach over the step, so fast pass-throughs between steps are not missed. The fruit
   does not collide with the robot.
-- **Rewards:** +10 per slice (sparse), EE–fruit proximity shaping, and penalties
-  on action rate, joint position limits and joint velocity limits.
-- **Logged success rate:** `Episode_Metrics/slice_success`.
+- **Rewards:** +10 per fruit sliced and -5 per fruit that hits the floor
+  unsliced (both sparse), `staged_slice_reward` shaping (scored for every
+  fruit in the air, the best one counts), and penalties on action rate, joint
+  position limits and joint velocity limits.
+- **Logged metrics** (`Episode_Metrics/*`, per episode): `slice_rate`
+  (sliced / (sliced + missed)), `fruits_sliced`, `fruits_missed`,
+  `fruits_spawned`, `peak_fruits_in_air`, `peak_blade_speed`.
 
 ## Usage
 
 ```bash
-# Sanity check (CPU is fine): idle policy never slices, scripted chaser does.
+# Sanity check (CPU is fine): idle policy never slices, scripted chaser does (one full episode each).
 uv run python -m fruitninja_rl.scripts.smoke_test
 
 # Train (GPU). Any config field can be overridden from the CLI; see --help.
