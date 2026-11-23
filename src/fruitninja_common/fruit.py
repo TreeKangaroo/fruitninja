@@ -13,6 +13,10 @@ from mjlab.entity import EntityCfg
 
 FRUIT_RADIUS = 0.04  # [m] roughly an apple
 FRUIT_MASS = 0.15  # [kg]
+# Height reference for planners: a fruit whose center is below this counts as
+# lost. (The RL fruit pool is stricter about "landed": it frees a slot only at
+# FRUIT_RADIUS above the floor, so planning against MISS_HEIGHT is conservative.)
+MISS_HEIGHT = 0.15  # [m]
 
 FRUIT_COLOR = (0.9, 0.2, 0.1, 1.0)  # whole fruit
 SLICED_COLOR = (0.2, 0.85, 0.2, 1.0)  # after the blade has cut it

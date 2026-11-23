@@ -15,6 +15,7 @@ Every field here can be overridden from the CLI, e.g.
 """
 
 from fruitninja_common.fruit import (
+  MISS_HEIGHT,  # noqa: F401  (re-exported: fruitninja_trajopt imports it from here)
   NUM_FRUIT_SLOTS,
   SLICED_COLOR,
   SPAWN_INTERVAL_S,

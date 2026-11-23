@@ -66,6 +66,9 @@ class FruitPool:
     self.new_slices = torch.zeros(n, device=dev)  # fruit sliced this step
     self.new_misses = torch.zeros(n, device=dev)  # unsliced fruit that landed this step
     self.blade_speed = torch.zeros(n, device=dev)
+    # Closest blade-fruit approach over the latest step, (envs, slots). Only
+    # meaningful for fruit in play (and not on the first step after a reset).
+    self.closest_distance = torch.zeros(n, k, device=dev)
     # For reward shaping: the fruit that were in the air and unsliced at the
     # start of the step (mask), with their positions/velocities at the end of it.
     self.shaping_mask = torch.zeros(n, k, device=dev)  # float 0/1
@@ -162,7 +165,7 @@ class FruitPool:
     self.shaping_vel = vel
 
     # Cuts, for all slots at once. Blade is (envs, 1, 3), fruit (envs, slots, 3).
-    cut, _, speed = slicing.check_slice(
+    cut, self.closest_distance, speed = slicing.check_slice(
       self.prev_blade_pos[:, None],
       blade[:, None],
       self.prev_fruit_pos,
