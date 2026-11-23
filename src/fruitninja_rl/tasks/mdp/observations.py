@@ -12,11 +12,13 @@ import torch
 
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
+from .fruit_pool import get_fruit_pool
+
 if TYPE_CHECKING:
   from mjlab.entity import Entity
   from mjlab.envs import ManagerBasedRlEnv
 
-__all__ = ["ee_pos", "ee_quat", "ee_lin_vel", "fruit_pos_rel_ee", "fruit_lin_vel"]
+__all__ = ["ee_pos", "ee_quat", "ee_lin_vel", "upcoming_fruit"]
 
 
 def _ee_pos_w(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -43,15 +45,23 @@ def ee_lin_vel(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg) -> torch.Tenso
   return robot.data.site_lin_vel_w[:, asset_cfg.site_ids].squeeze(1)
 
 
-def fruit_pos_rel_ee(
-  env: ManagerBasedRlEnv, fruit_name: str, asset_cfg: SceneEntityCfg
+def upcoming_fruit(
+  env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg, num_fruits: int = 4
 ) -> torch.Tensor:
-  """Vector from the end effector to the fruit center. Shape (B, 3)."""
-  fruit: Entity = env.scene[fruit_name]
-  return fruit.data.root_link_pos_w - _ee_pos_w(env, asset_cfg)
+  """The ``num_fruits`` lowest unsliced fruit in the air, lowest (most urgent) first.
+  Use ``num_fruits`` = the pool size to see all of them.
 
-
-def fruit_lin_vel(env: ManagerBasedRlEnv, fruit_name: str) -> torch.Tensor:
-  """Fruit linear velocity. Shape (B, 3)."""
-  fruit: Entity = env.scene[fruit_name]
-  return fruit.data.root_link_lin_vel_w
+  Per fruit: vector from the end effector (3), velocity (3), valid flag (1).
+  Missing fruit (fewer than ``num_fruits`` in the air) are all zeros with
+  flag 0. Shape (B, 7 * num_fruits).
+  """
+  pool = get_fruit_pool(env)
+  pos = pool.positions(env)
+  vel = pool.velocities(env)
+  candidate = pool.active & ~pool.sliced
+  order = torch.where(candidate, pos[..., 2], torch.inf).argsort(1)[:, :num_fruits]
+  valid = candidate.gather(1, order).float().unsqueeze(-1)  # (B, M, 1)
+  idx = order.unsqueeze(-1).expand(-1, -1, 3)
+  rel = (pos.gather(1, idx) - _ee_pos_w(env, asset_cfg).unsqueeze(1)) * valid
+  v = vel.gather(1, idx) * valid
+  return torch.cat([rel, v, valid], dim=-1).flatten(1)

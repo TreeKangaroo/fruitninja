@@ -1,16 +1,29 @@
 """Fruit slicing with the KUKA iiwa: the mjlab environment config.
 
-One episode = one fruit. The fruit is dropped from a random point above the
-robot and falls straight down; the episode ends when it is sliced, when it
-falls below ``MISS_HEIGHT``, or on timeout.
+One episode = ``EPISODE_LENGTH_S`` seconds of a fruit stream. Fruit are dropped
+one after another (random gap, ``SPAWN_INTERVAL_S``) from random points above
+the robot and fall straight down. The episode only ends on timeout; the robot
+should slice as many fruit as it can. Sliced fruit turn green and keep falling;
+every fruit disappears when it reaches the floor (see ``mdp/fruit_pool.py``).
+
+``make_slicing_env_cfg(multi_fruit=False)`` is the single-fruit variant: one
+fruit per episode, which ends as soon as the fruit is sliced or reaches the floor.
 
 Every field here can be overridden from the CLI, e.g.
   uv run train Fruitninja-Slice-Iiwa --env.scene.num-envs 2048 \
       --env.rewards.ee-fruit-proximity.weight 0.0
 """
 
-from fruitninja_common import slicing
-from fruitninja_common.fruit import FruitDropRange, get_fruit_cfg
+from fruitninja_common.fruit import (
+  MISS_HEIGHT,  # noqa: F401  (re-exported: fruitninja_trajopt imports it from here)
+  NUM_FRUIT_SLOTS,
+  SLICED_COLOR,
+  SPAWN_INTERVAL_S,
+  FruitDropRange,
+  fruit_name,
+  get_fruit_cfg,
+  sliced_fruit_name,
+)
 from fruitninja_common.robot import EE_SITE_NAME, VELOCITY_LIMITS, get_iiwa_robot_cfg
 from fruitninja_rl.tasks import mdp
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -26,8 +39,10 @@ from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.viewer import ViewerConfig
 
-FRUIT = "fruit"
-MISS_HEIGHT = 0.15  # [m] fruit center below this height = missed
+EPISODE_LENGTH_S = 10.0  # multi-fruit
+SINGLE_FRUIT_EPISODE_LENGTH_S = 2.0  # safety net: a fruit lands in ~0.6 s
+FRUIT_NAMES = tuple(fruit_name(i) for i in range(NUM_FRUIT_SLOTS))
+SLICED_FRUIT_NAMES = tuple(sliced_fruit_name(i) for i in range(NUM_FRUIT_SLOTS))
 
 
 def _ee() -> SceneEntityCfg:
@@ -35,10 +50,18 @@ def _ee() -> SceneEntityCfg:
   return SceneEntityCfg("robot", site_names=(EE_SITE_NAME,))
 
 
-def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBasedRlEnvCfg:
+def make_slicing_env_cfg(
+  drop: FruitDropRange = FruitDropRange(),
+  spawn_interval_s: tuple[float, float] = SPAWN_INTERVAL_S,
+  multi_fruit: bool = True,
+) -> ManagerBasedRlEnvCfg:
   scene = SceneCfg(
     terrain=TerrainEntityCfg(terrain_type="plane"),
-    entities={"robot": get_iiwa_robot_cfg(), FRUIT: get_fruit_cfg()},
+    entities={
+      "robot": get_iiwa_robot_cfg(),
+      **{name: get_fruit_cfg() for name in FRUIT_NAMES},
+      **{name: get_fruit_cfg(SLICED_COLOR) for name in SLICED_FRUIT_NAMES},
+    },
     num_envs=1,
     env_spacing=2.0,
   )
@@ -64,18 +87,17 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     )
   }
 
-  # Privileged state: the policy sees the exact fruit position and velocity.
+  # Privileged state: the policy sees the exact position and velocity of every
+  # unsliced fruit in the air, lowest first (see mdp.upcoming_fruit).
   policy_terms = {
     "joint_pos": ObservationTermCfg(func=mdp.joint_pos_rel),
     "joint_vel": ObservationTermCfg(func=mdp.joint_vel_rel),
     "ee_pos": ObservationTermCfg(func=mdp.ee_pos, params={"asset_cfg": _ee()}),
     "ee_quat": ObservationTermCfg(func=mdp.ee_quat, params={"asset_cfg": _ee()}),
     "ee_lin_vel": ObservationTermCfg(func=mdp.ee_lin_vel, params={"asset_cfg": _ee()}),
-    "fruit_pos_rel_ee": ObservationTermCfg(
-      func=mdp.fruit_pos_rel_ee, params={"fruit_name": FRUIT, "asset_cfg": _ee()}
-    ),
-    "fruit_lin_vel": ObservationTermCfg(
-      func=mdp.fruit_lin_vel, params={"fruit_name": FRUIT}
+    "upcoming_fruit": ObservationTermCfg(
+      func=mdp.upcoming_fruit,
+      params={"asset_cfg": _ee(), "num_fruits": NUM_FRUIT_SLOTS},
     ),
     "last_action": ObservationTermCfg(func=mdp.last_action),
   }
@@ -101,43 +123,44 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
-    "drop_fruit": EventTermCfg(
-      func=mdp.reset_root_state_uniform,
+    # Clears the env's fruit and drops the first one at reset (the only one in
+    # single-fruit mode)...
+    "fruit_pool": EventTermCfg(
+      func=mdp.FruitPool,
       mode="reset",
       params={
-        "pose_range": {"x": drop.x, "y": drop.y, "z": drop.z},
-        "velocity_range": {"x": drop.vx, "y": drop.vy, "z": drop.vz},
-        "asset_cfg": SceneEntityCfg(FRUIT),
+        "fruit_names": FRUIT_NAMES,
+        "sliced_fruit_names": SLICED_FRUIT_NAMES,
+        "drop": drop,
+        "asset_cfg": _ee(),
       },
     ),
   }
+  if multi_fruit:
+    # ...then the next one after a random gap from the previous drop.
+    events["spawn_fruit"] = EventTermCfg(
+      func=mdp.spawn_fruit, mode="interval", interval_range_s=spawn_interval_s
+    )
 
+  # Multi-fruit: slicing does not end the episode, only the clock does.
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-    "fruit_sliced": TerminationTermCfg(
-      func=mdp.fruit_sliced,
-      params={
-        "fruit_name": FRUIT,
-        "asset_cfg": _ee(),
-        "hit_radius": slicing.HIT_RADIUS,
-        "min_blade_speed": slicing.MIN_BLADE_SPEED,
-      },
-    ),
-    "fruit_missed": TerminationTermCfg(
-      func=mdp.root_height_below_minimum,
-      params={"minimum_height": MISS_HEIGHT, "asset_cfg": SceneEntityCfg(FRUIT)},
-    ),
   }
+  if not multi_fruit:
+    terminations["fruit_resolved"] = TerminationTermCfg(
+      func=mdp.fruits_resolved, params={"num_fruits": 1}
+    )
 
   # Reward weights are multiplied by step_dt (0.02 s) by mjlab, so the slice
-  # bonus of 500 is worth +10 once, while per-step terms accumulate over the
-  # ~25 steps of an episode.
+  # bonus of 500 is worth +10 per fruit, while per-step terms accumulate over
+  # the steps of an episode (500 in multi-fruit mode).
   rewards = {
-    # Sparse task reward (proposal Sec. 3.2.2).
-    "slice": RewardTermCfg(
-      func=mdp.termination_term, weight=500.0, params={"term_name": "fruit_sliced"}
-    ),
-    # Dense shaping: reach the fruit, then slice it (reaching * (1 + slicing)).
+    # Sparse task reward (proposal Sec. 3.2.2): once per fruit sliced.
+    "slice": RewardTermCfg(func=mdp.slices_this_step, weight=500.0),
+    # Penalty for every fruit that reaches the floor unsliced (-5 each).
+    "fruit_missed": RewardTermCfg(func=mdp.fruits_missed_this_step, weight=-250.0),
+    # Dense shaping: reach a fruit, then slice it (reaching * (1 + slicing)),
+    # scored for every fruit in the air; the best one counts.
     # Set weight to 0 for sparse-only.
     "staged_slice_reward": RewardTermCfg(
       func=mdp.staged_slice_reward,
@@ -145,7 +168,6 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
       params={
         "reaching_std": 0.3,
         "miss_std": 0.3,
-        "fruit_name": FRUIT,
         "asset_cfg": _ee(),
       },
     ),
@@ -154,12 +176,12 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     "ee_fruit_proximity": RewardTermCfg(
       func=mdp.ee_fruit_proximity,
       weight=0.0,
-      params={"std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()},
+      params={"std": 0.3, "asset_cfg": _ee()},
     ),
     "slice_object_reward": RewardTermCfg(
       func=mdp.slice_object_reward,
       weight=0.0,
-      params={"miss_std": 0.3, "fruit_name": FRUIT, "asset_cfg": _ee()},
+      params={"miss_std": 0.3, "asset_cfg": _ee()},
     ),
     # Motion-quality regularizers.
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
@@ -175,10 +197,15 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     ),
   }
 
-  # Logged once per episode under Metrics/ (Metrics/slice_success = success rate).
+  # Logged once per episode under Episode_Metrics/. Counts are per episode;
+  # slice_rate = sliced / (sliced + missed) is the headline success number.
   metrics = {
-    "slice_success": MetricsTermCfg(func=mdp.slice_success, reduce="max"),
-    "neg_closest_approach": MetricsTermCfg(func=mdp.closest_approach, reduce="max"),
+    "fruits_spawned": MetricsTermCfg(func=mdp.fruits_spawned, reduce="last"),
+    "fruits_sliced": MetricsTermCfg(func=mdp.fruits_sliced, reduce="last"),
+    "fruits_missed": MetricsTermCfg(func=mdp.fruits_missed, reduce="last"),
+    "slice_rate": MetricsTermCfg(func=mdp.slice_rate, reduce="last"),
+    "peak_blade_speed": MetricsTermCfg(func=mdp.blade_speed, reduce="max"),
+    "peak_fruits_in_air": MetricsTermCfg(func=mdp.fruits_in_air, reduce="max"),
   }
 
   return ManagerBasedRlEnvCfg(
@@ -189,12 +216,17 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
     rewards=rewards,
     terminations=terminations,
     metrics=metrics,
+    # Track the robot, not a fixed world point: env 0 sits at a grid offset that
+    # is far from the world origin when num_envs is large, so a WORLD camera
+    # films an empty floor in training videos.
     viewer=ViewerConfig(
-      origin_type=ViewerConfig.OriginType.WORLD,
-      lookat=(0.5, 0.0, 0.7),
-      distance=3.0,
+      origin_type=ViewerConfig.OriginType.ASSET_ROOT,
+      entity_name="robot",
+      distance=4.0,
       elevation=-15.0,
       azimuth=135.0,
+      width=640,
+      height=480,
     ),
     sim=SimulationCfg(
       nconmax=50,
@@ -202,6 +234,5 @@ def make_slicing_env_cfg(drop: FruitDropRange = FruitDropRange()) -> ManagerBase
       mujoco=MujocoCfg(timestep=0.005),  # 200 Hz physics
     ),
     decimation=4,  # 50 Hz policy
-    # Safety net only: a fruit dropped from 1.7 m reaches MISS_HEIGHT in ~0.56 s.
-    episode_length_s=2.0,
+    episode_length_s=EPISODE_LENGTH_S if multi_fruit else SINGLE_FRUIT_EPISODE_LENGTH_S,
   )
