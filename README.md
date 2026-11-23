@@ -81,7 +81,7 @@ describes multi.
   velocity, valid flag; zeros for empty slots), last action.
 - **Cut condition** (`fruitninja_common/slicing.py`): within one control step,
   the blade *center* passes within `HIT_RADIUS` (= fruit radius) of the fruit
-  center while moving at ≥ `MIN_BLADE_SPEED` (0.5 m/s). The check uses closest
+  center while the blade itself moves at ≥ `MIN_BLADE_SPEED` (1.0 m/s). The check uses closest
   approach over the step, so fast pass-throughs between steps are not missed. The fruit
   does not collide with the robot.
 - **Rewards:** +10 per fruit sliced and -5 per fruit that hits the floor

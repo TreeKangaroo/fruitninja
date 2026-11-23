@@ -22,7 +22,14 @@ from fruitninja_common.fruit import FRUIT_RADIUS
 # radius means "the blade point goes through the fruit". Tighten this to
 # require cutting closer to the midpoint (proposal Sec. 4.1).
 HIT_RADIUS = FRUIT_RADIUS  # [m]
-# Minimum blade speed for a cut rather than a touch.
+# Minimum blade speed for a cut rather than a touch. This is the blade's own
+# speed, not its speed relative to the fruit: a falling fruit already moves at
+# 2-4 m/s, so a relative-speed test would pass a nearly still blade. At 0.5 m/s
+# policies learned to park the blade high up and let fruit fall onto it
+# (median blade speed at a slice: 0.7 m/s). Keep it below what the arm can
+# reach under the action limits in slicing_env_cfg.py: a full-scale push from
+# the ready pose peaks at 1.05-1.43 m/s depending on direction. The reward's
+# speed shaping (rewards._slicing) also saturates at this value.
 MIN_BLADE_SPEED = 0.5  # [m/s]
 
 
