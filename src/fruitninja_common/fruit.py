@@ -66,11 +66,40 @@ class FruitDropRange:
 # (for vx <= 0).
 X_VELOCITY_DROP = FruitDropRange(x=(0.79, 0.885), vx=(-0.75, -0.50))
 # (0.79, 0.885)
+
+# The "zvel" trajectory: the same drop, but tossed up (vz > 0) or thrown down
+# (vz < 0). x, y and vx are those of FruitDropRange(), so the fruit still falls
+# straight through x = 0.45-0.70 m; only the timing changes. The release z is
+# moved down to compensate for the toss: the highest point of every path
+# (z0 + vz^2 / 2g) is still 1.40-1.70 m, so the fruit reaches blade height at the
+# straight drop's speed (3.7-4.4 m/s), but 0.26-0.60 s after release instead of
+# 0.38-0.45 s. Thrown-down fruit leave the robot less time, tossed-up fruit more.
+# Air time grows to up to 0.73 s, so more fruit share the pool's slots. If you
+# change vz, set z = (1.40 - min|vz|^2 / 2g, 1.70 - max|vz|^2 / 2g)
+# (min|vz| = 0 when the range spans 0); it needs max|vz| <~ 2.4 m/s.
+Z_VELOCITY_DROP = FruitDropRange(z=(1.40, 1.585), vz=(-1.5, 1.5))
+
+# The "yvel" trajectories: the same drop, plus a constant sideways velocity, like
+# xvel but along y. Release height, x and fall time are those of
+# FruitDropRange(). The release y is moved to one side to compensate for the
+# drift: every fruit crosses blade height (0.38-0.45 s after release) at
+# y = -0.30-0.30 m, as in the straight drop. A single range with both signs of vy
+# would leave only y = +-0.07 m to release from, so there is one entry per
+# direction, mirror images of each other. If you change vy (for vy >= 0), set
+# y = (-0.30 - vy_min * 0.378, 0.30 - vy_max * 0.452) and mirror it for the other.
+Y_VELOCITY_POS_DROP = FruitDropRange(y=(-0.489, -0.039), vy=(0.50, 0.75), weight=0.5)
+Y_VELOCITY_NEG_DROP = FruitDropRange(y=(0.039, 0.489), vy=(-0.75, -0.50), weight=0.5)
+
 # What the robot trains on: every fruit independently picks one of these when it
-# spawns, so a single episode (and the air at one moment) mixes them.
+# spawns, so a single episode (and the air at one moment) mixes them. The two
+# yvel directions have half weight each, so sideways fruit as a whole are as
+# common as each other type.
 TRAJECTORIES: dict[str, FruitDropRange] = {
   "straight": FruitDropRange(),
   "xvel": X_VELOCITY_DROP,
+  "zvel": Z_VELOCITY_DROP,
+  "yvel_pos": Y_VELOCITY_POS_DROP,
+  "yvel_neg": Y_VELOCITY_NEG_DROP,
 }
 
 

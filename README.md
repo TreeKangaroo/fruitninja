@@ -51,15 +51,20 @@ describes multi.
   slots are busy). Each takes ~0.55 s to fall. Slicing does **not** end the
   episode; only the clock does.
 - **Trajectories** (both variants): each fruit independently picks an entry of
-  `TRAJECTORIES` in `fruit.py`, in proportion to its `weight` (equal by default):
+  `TRAJECTORIES` in `fruit.py`, in proportion to its `weight` (1 each, 0.5 for
+  each `yvel` direction). Axes: x forward from the robot, y sideways, z up.
 
-  | name | release x [m] | vx [m/s] |
-  |---|---|---|
-  | `straight` | 0.45–0.70 | 0 |
-  | `xvel` | 0.79–0.885 | -0.75 to -0.50 |
+  | name | release x [m] | release y [m] | release z [m] | velocity [m/s] |
+  |---|---|---|---|---|
+  | `straight` | 0.45–0.70 | ±0.30 | 1.40–1.70 | 0 |
+  | `xvel` | 0.79–0.885 | ±0.30 | 1.40–1.70 | vx -0.75 to -0.50 |
+  | `zvel` | 0.45–0.70 | ±0.30 | 1.40–1.585 | vz -1.5 to 1.5 (up or down) |
+  | `yvel_pos` | 0.45–0.70 | -0.489 to -0.039 | 1.40–1.70 | vy 0.50 to 0.75 |
+  | `yvel_neg` | 0.45–0.70 | 0.039 to 0.489 | 1.40–1.70 | vy -0.75 to -0.50 |
 
-  Both release at y ±0.3 m, z 1.4–1.7 m and cross blade height (z = 0.70 m)
-  within x = 0.45–0.70 m. To add a trajectory, add an entry to the dict. To
+  All peak at 1.4–1.7 m and cross blade height (z = 0.70 m) within
+  x = 0.45–0.70 m, y = ±0.30 m; `zvel` only changes when they get there
+  (0.26–0.60 s after release, vs 0.38–0.45 s). To add a trajectory, add an entry to the dict. To
   change the mix for a training run:
   `--env.events.fruit-pool.params.trajectories.xvel.weight 2`.
 - **Fruit lifecycle** (`tasks/mdp/fruit_pool.py`): red while whole, green once

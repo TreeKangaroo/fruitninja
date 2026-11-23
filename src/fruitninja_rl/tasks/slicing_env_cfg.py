@@ -3,7 +3,7 @@
 One episode = ``EPISODE_LENGTH_S`` seconds of a fruit stream. Fruit are dropped
 one after another (random gap, ``SPAWN_INTERVAL_S``) from random points above
 the robot, each on a randomly chosen trajectory (``TRAJECTORIES`` in fruit.py:
-straight down, or drifting in x). The episode only ends on timeout; the robot
+straight down, drifting in x or y, or tossed up/down). The episode only ends on timeout; the robot
 should slice as many fruit as it can. Sliced fruit turn green and keep falling;
 every fruit disappears when it reaches the floor (see ``mdp/fruit_pool.py``).
 
